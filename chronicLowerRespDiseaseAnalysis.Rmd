@@ -25,6 +25,10 @@ library(classInt)
 library(brinla)
 library(INLA)
 library(spdep)
+library(brms)
+library(brinla)
+library(performance)
+
 covid19<-read.csv("data/covid04-24-2020.csv") %>%
   dplyr::select(FIPS,Covid.Confirmed,Covid.Deaths) %>%
   mutate(covidCFR=Covid.Deaths*100/Covid.Confirmed)
@@ -37,7 +41,7 @@ demog<-read.csv("data/ACS5Years2018.csv")
 
 uscounty<-readOGR("data/SVI","SVI2018_US_county")
 uscounty@data<-uscounty@data %>%
-  select(FIPS,ST,ST_ABBR,E_TOTPOP,EP_POV)
+  dplyr::select(FIPS,ST,ST_ABBR,E_TOTPOP,EP_POV)
 
 # ICD-10 Codes: J40-J47 (Chronic lower respiratory diseases)
 ```
@@ -69,7 +73,7 @@ covid19$Covid.Deaths[is.na(covid19$Covid.Deaths)]<-0
 
 demog$fips<-substring(demog$GEO_ID,10,14)
 demog<-demog%>% 
-  select(fips,DP05_0037PE,DP05_0038PE,DP05_0071PE,DP05_0002PE,DP05_0003PE,DP05_0024PE,DP05_0008PE,
+  dplyr::select(fips,DP05_0037PE,DP05_0038PE,DP05_0071PE,DP05_0002PE,DP05_0003PE,DP05_0024PE,DP05_0008PE,
 DP05_0009PE,
 DP05_0010PE,
 DP05_0011PE,
@@ -86,7 +90,7 @@ colnames(demog)<-c("fips","whitePE","blackPE","latinoPE","malePE","femalePE",
 pm25$fips<-sprintf("%05d", pm25$fips)
 pm25$pm25avg<-rowMeans(pm25[,2:20],na.rm = T)
 pm25<-pm25%>% 
-  select(fips,pm25avg)
+  dplyr::select(fips,pm25avg)
 
 
 
@@ -96,9 +100,9 @@ pm25<-pm25%>%
 
 <!-- # County level PM 2.5 -->
 
-```{r,include=FALSE}
+```{r}
 uscounty <- merge(uscounty, cdi,by.x="ST_ABBR",by.y="ST_ABBR") #Chronic diseases
-uscounty <- merge(uscounty, covid19,by.x="FIPS",by.y="id") #covidDea
+uscounty <- merge(uscounty, covid19,by.x="FIPS",by.y="id") #covidDeaths
 uscounty <- merge(uscounty, clrdDeaths,by.x="FIPS",by.y="fips") #asthmaDe
 uscounty <- merge(uscounty, demog,by.x="FIPS",by.y="fips") #demog
 uscounty <- merge(uscounty, pm25,by.x="FIPS",by.y="fips") #pm25
@@ -269,7 +273,7 @@ inla.m2 <- inla( f1,
                  # family = "poisson",
                  family = "gaussian",
                  data = sirMap@data,
-                 num.threads = 8,verbose = F,
+                 num.threads = 16,verbose = F,
                  control.predictor = list(compute = TRUE),
                  control.compute = list(dic = TRUE,waic=T,cpo=TRUE))
 
@@ -386,69 +390,134 @@ Podemos concluir que no hay suficiene evidencia para que aumente el riesgo debid
 
 # brms
 
-```{r}
-library(brms)
-library(brinla)
-```
-
-```{r}
-brmsDF<-as.data.frame(sirMap)
-
-brm.fl1 <- brm(clrd.Deaths ~ offset(log(Easthma)) + Covid.Deaths + pm25avg + EP_POV + blackPE + latinoPE + femalePE + over65PE + avgObesityPrev + smokingPrev + (1+avgObesityPrev + smokingPrev|ST_ABBR), 
-              data = brmsDF, 
-              family = "zero_inflated_poisson",
-              # family = poisson(),
-              iter = 3000, cores  = 8,seed = 2020)  
-summary(brm.fl1)
-round(exp(summary(brm.fl1)$fixed[,c(1,3,4)]),2)
-
-pp_check(brm.fl1,nsamples = nrow(sirMap)/1)
-plot(brm.fl1, N = 2, ask = FALSE)
-plot(brm.fl1, points = TRUE,ask=FALSE)
-# names(brm.bmi)
-# ## extract fitted values
-fitted_values <- fitted(brm.fl1)
-```
-
 
 
 ```{r}
 brmsDF<-as.data.frame(uscounty)
 
-brm.fl2 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + clrdSMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + (1+avgObesityPrev + smokingPrev +asthmaPrev|ST_ABBR), 
+brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + clrdSMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + (1|ST_ABBR), 
               data = brmsDF, 
-              family = "zero_inflated_poisson",
+              family = "poisson",chains=6,
               # family = poisson(),
-              iter = 3000, cores  = 8,seed = 2020)  
-summary(brm.fl2)
-round(exp(summary(brm.fl2)$fixed[,c(1,3,4)]),2)
+              iter = 10000, cores  = 16,seed = 2020)  
+summary(brm.c19)
+round(exp(summary(brm.c19)$fixed[,c(1,3,4)]),2)
 
-pp_check(brm.fl2,nsamples = nrow(brmsDF)/1)
-plot(brm.fl2, N = 2, ask = FALSE)
-plot(brm.fl2, points = TRUE,ask=FALSE)
+pp_check(brm.c19,nsamples = nrow(brmsDF)/1)
+plot(brm.c19, N = 2, ask = FALSE)
+plot(brm.c19, points = TRUE,ask=FALSE)
 # names(brm.bmi)
 # ## extract fitted values
-fitted_values <- fitted(brm.fl1)
+fitted_values <- fitted(brm.c19)
 ```
 
-Con random slopes
+Group-Level Effects: 
+~ST_ABBR (Number of levels: 48) 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)     1.02      0.11     0.87     1.28 1.59       10       33
 
-clrdSMR            0.99     0.99     0.99
-a1524              1.02     1.00     1.03
-a2534              1.06     1.04     1.07
-a3544              1.13     1.10     1.17
-a4554              1.36     1.31     1.40
-a5564              0.93     0.90     0.96
-over65PE           1.18     1.16     1.19
-pm25avg            1.07     1.06     1.09
-EP_POV             1.03     1.03     1.04
-blackPE            1.02     1.01     1.02
-latinoPE           1.02     1.01     1.02
-malePE             0.00     0.00   182.07
-femalePE           0.00     0.00   205.81
-avgObesityPrev     0.96     0.81     1.14
-smokingPrev        0.98     0.85     1.15
-asthmaPrev         1.06     0.76     1.55
+Population-Level Effects: 
+               Estimate Est.Error  l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept      -6675.54  13392.52 -36861.39  7620.67 2.55        7       24
+clrdSMR           -0.01      0.00     -0.01    -0.01 1.09       42      138
+a1524              0.02      0.01      0.01     0.03 1.47       12       18
+a2534              0.06      0.01      0.04     0.07 1.61       10       21
+a3544              0.08      0.01      0.05     0.10 1.51       11       27
+a4554              0.32      0.02      0.29     0.36 1.75        9       29
+a5564             -0.11      0.01     -0.13    -0.09 1.49       11       38
+over65PE           0.16      0.01      0.15     0.17 1.47       12       25
+pm25avg            0.09      0.01      0.08     0.10 1.33       15       51
+EP_POV             0.02      0.00      0.02     0.03 1.23       19       44
+blackPE            0.02      0.00      0.02     0.02 1.21       20       81
+latinoPE           0.02      0.00      0.02     0.02 1.18       23       53
+malePE            66.62    133.93    -76.33   368.49 2.55        7       24
+femalePE          66.76    133.93    -76.19   368.63 2.55        7       24
+avgObesityPrev     0.07      0.06     -0.01     0.20 1.69       10       44
+smokingPrev       -0.05      0.10     -0.26     0.08 2.09        8       23
+asthmaPrev         0.02      0.12     -0.19     0.26 1.93        8       22
+htaPrev           -0.20      0.04     -0.29    -0.13 1.41       13       47
+chdPrev            0.71      0.37     -0.06     1.32 2.45        7       19
+
+Samples were drawn using sampling(NUTS). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).
+Parts of the model have not converged (some Rhats are > 1.05). Be careful when analysing the results! We recommend running more iterations and/or setting stronger priors.                   Estimate l-95% CI      u-95% CI
+Intercept      0.000000e+00     0.00           Inf
+clrdSMR        9.900000e-01     0.99  9.900000e-01
+a1524          1.020000e+00     1.01  1.030000e+00
+a2534          1.060000e+00     1.04  1.070000e+00
+a3544          1.080000e+00     1.06  1.100000e+00
+a4554          1.380000e+00     1.34  1.430000e+00
+a5564          9.000000e-01     0.88  9.200000e-01
+over65PE       1.170000e+00     1.16  1.190000e+00
+pm25avg        1.090000e+00     1.08  1.110000e+00
+EP_POV         1.020000e+00     1.02  1.030000e+00
+blackPE        1.020000e+00     1.02  1.020000e+00
+latinoPE       1.020000e+00     1.02  1.020000e+00
+malePE         8.545021e+28     0.00 1.082402e+160
+femalePE       9.856587e+28     0.00 1.242767e+160
+avgObesityPrev 1.070000e+00     0.99  1.220000e+00
+smokingPrev    9.500000e-01     0.77  1.090000e+00
+asthmaPrev     1.020000e+00     0.83  1.300000e+00
+htaPrev        8.200000e-01     0.75  8.800000e-01
+chdPrev        2.030000e+00     0.95  3.750000e+00
+
+# INLA Version
+
+```{r}
+sirMap<-uscounty
+# sirMap$E_PCI<-as.numeric(sirMap$E_PCI)
+# sirMap$E_MINRTY<-as.numeric(sirMap$E_MINRTY)
+# sirMap$EP_AGE65<-as.numeric(sirMap$EP_AGE65)
+sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed)
+# hist(sirMap$Covid.Confirmed,128)
+sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP
+sirMap$Covid.Deaths[is.na(sirMap$Covid.Deaths)]<-0
+sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP
+sirMap$clrd.Deaths[is.na(sirMap$clrd.Deaths)]<-0
+sirMap$clrd.Deaths.p100k<-sirMap$clrd.Deaths*100/sirMap$E_TOTPOP
+
+
+# nb <- poly2nb(sirMap)
+# nb2INLA("us.adj", nb)
+# g <- inla.read.graph(filename = "us.adj")
+# sirMap$re_u <- 1:nrow(sirMap@data)
+sirMap$re_v <- 1:nrow(sirMap@data)
+
+f1<-Covid.Deaths ~  clrdSMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + f(ST_ABBR,model = "iid") + f(re_v, model = "iid")
+inla.cv19 <- inla( f1,
+                 # family = "zeroinflatedpoisson1",
+                 family = "poisson",
+                 data = sirMap@data,E = Easthma,
+                 num.threads = 8,verbose = F,
+                 control.predictor = list(compute = TRUE),
+                 control.compute = list(dic = TRUE,waic=T,cpo=TRUE))
+
+sirMap$RRcv19<- inla.cv19$summary.fitted.values[, "mean"]
+sirMap$LLcv19 <- inla.cv19$summary.fitted.values[, "0.025quant"]
+sirMap$ULcv19 <- inla.cv19$summary.fitted.values[, "0.975quant"]
+summary(inla.cv19)
+round(exp(inla.cv19$summary.fixed[,c(1,3,5)]),2)
+bri.hyperpar.plot(inla.cv19)
+bri.Pois.resid(inla.cv19)
+tab <- inla.m2$summary.random$ST_ABBR
+names(tab)[c(4, 6)] <- c("IClower", "ICupper")
+tab<-tab[order(tab$ID),]
+tab$idx<-nrow(tab):1
+tab$mean_exp<-exp(tab$mean)
+tab<-tab[!is.infinite(tab$mean_exp),]
+tab$IClower_exp<-exp(tab$IClower)
+tab$ICupper_exp<-exp(tab$ICupper)
+ID<-tab$ID
+ggplot(data = tab, aes(x = mean_exp, y = idx)) +
+  geom_point() + xlab(expression(u[p])) +
+  scale_x_continuous(breaks = NULL)+
+  scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) +
+  geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) +
+  geom_vline (xintercept = 1, linetype = 2)+
+  theme_fivethirtyeight()
+```
+
 
 # BRMS sin random slopes
 

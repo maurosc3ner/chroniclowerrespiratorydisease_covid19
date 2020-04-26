@@ -1,0 +1,421 @@
+---
+title: "State Level Analysis of Risk for Asthma and Covid-19"
+author: "Esteban Correa"
+date: "April 21, 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(tidyverse)
+library(SpatialEpi)
+library(raster)
+library(rgeos)
+library(rgdal)
+library(sf)
+library(leaflet)
+library(RColorBrewer)
+library(ggthemes)
+library(ggplot2)
+library(lubridate)
+library(classInt)
+library(brinla)
+library(INLA)
+library(spdep)
+covid19<-read.csv("../covid19/data/jhucounty04-20-2020.csv") %>%
+  dplyr::select(FIPS,Covid.Confirmed,Covid.Deaths)
+asthmaDeaths<-read.csv("../asthma/CDCWONDER/asthmaDeaths.csv") %>%
+  dplyr::select(County.Code,asthma.Deaths,asthma.Population,Crude.Rate) 
+cdi<-read.csv("../covid19/data/SVI2018/CDIByState.csv")
+pm25<-read.csv("pm2.5byCounty.csv")
+demog<-read.csv("../asthma/factFinder/ACS5Years2018.csv")
+# load("pm25STCounty.RData")
+uscounty<-readOGR("../covid19/data/SVI2018","SVI2018_US_county")
+uscounty@data<-uscounty@data %>%
+  select(FIPS,ST,ST_ABBR,E_TOTPOP,EP_POV)
+
+# ICD-10 Codes: J40-J47 (Chronic lower respiratory diseases)
+```
+
+# Covid19 at April 20-2020, Asthma deaths from 2010-2017
+
+```{r,include=FALSE}
+asthmaDeaths$asthma.Deaths<-as.numeric(as.character(asthmaDeaths$asthma.Deaths))
+asthmaDeaths$asthma.Population<-as.numeric(as.character(asthmaDeaths$asthma.Population))
+asthmaDeaths$Crude.Rate<-as.numeric(as.character(asthmaDeaths$Crude.Rate))
+asthmaDeaths$fips<-sprintf("%05d", asthmaDeaths$County.Code)
+asthmaDeaths$asthma.Deaths[is.na(asthmaDeaths$asthma.Deaths)]<-0
+
+covid19$id<-sprintf("%05d", covid19$FIPS) 
+covid19$Covid.Deaths[is.na(covid19$Covid.Deaths)]<-0
+
+
+demog$fips<-substring(demog$GEO_ID,10,14)
+demog<-demog%>% 
+  select(fips,DP05_0037PE,DP05_0038PE,DP05_0071PE,DP05_0002PE,DP05_0003PE,DP05_0024PE)
+colnames(demog)<-c("fips","whitePE","blackPE","latinoPE","malePE","femalePE","over65PE")
+
+pm25$fips<-sprintf("%05d", pm25$fips)
+pm25$pm25avg<-rowMeans(pm25[,2:20],na.rm = T)
+pm25<-pm25%>% 
+  select(fips,pm25avg)
+
+
+
+```
+
+
+
+<!-- # County level PM 2.5 -->
+
+```{r,include=FALSE}
+uscounty <- merge(uscounty, cdi,by.x="ST_ABBR",by.y="ST_ABBR") #Chronic diseases
+uscounty <- merge(uscounty, covid19,by.x="FIPS",by.y="id") #covidDea
+uscounty <- merge(uscounty, asthmaDeaths,by.x="FIPS",by.y="fips") #asthmaDe
+uscounty <- merge(uscounty, demog,by.x="FIPS",by.y="fips") #demog
+uscounty <- merge(uscounty, pm25,by.x="FIPS",by.y="fips") #pm25
+
+uscounty$asthma.Deaths[is.na(uscounty$asthma.Deaths)]<-0
+uscounty$Covid.Deaths[is.na(uscounty$Covid.Deaths)]<-0
+#removing alaska y puerto rico y NY
+uscounty<-uscounty[uscounty$ST!="02",]
+uscounty<-uscounty[uscounty$ST!="15",]
+uscounty<-uscounty[uscounty$ST!="36",]
+
+uscounty<-uscounty[uscounty$FIPS!="35039",]
+head(uscounty,100)
+```
+
+
+
+
+```{r,include=FALSE}
+
+# head(uscounty,100)
+uscounty$E_TOTPOP<-as.numeric(as.character(uscounty$E_TOTPOP))
+uscounty$Easthma <- expected(uscounty$E_TOTPOP, uscounty$asthma.Deaths, 1)
+uscounty$Ecovid <- expected(uscounty$E_TOTPOP, uscounty$Covid.Deaths, 1)
+
+uscounty$SIR.asthma <- uscounty$asthma.Deaths/uscounty$Easthma
+uscounty$SIR.covid <- uscounty$Covid.Deaths/uscounty$Ecovid
+summary(uscounty)
+```
+
+# Covariates
+
+EP_MINRTY = Percentage minority (all persons except white, nonHispanic) estimate E_PCI Per capita income estimate, 2014-2018 ACS.
+EP_CROWD = At household level (occupied housing units), more people than rooms estimate, 2014-2018 ACS
+EP_AGE65  = percentage of people age 65 over
+EP_POV = Percentage of people living under poverty
+EP_CROWD = Percentage of occupied housing units with more people than rooms estimate
+
+<!-- # Asthma deaths 1 -->
+
+<!-- $Asthma_{Deaths}\sim covidMortality_{100k} + pm25_{2018} + EP\_POV_{\%} + EP\_AGE65_{\%} + EP\_MINRTY_{\%} + EP\_CROWD_{\%} + (1|STATE)$ -->
+
+<!-- ```{r,include = FALSE} -->
+<!-- sirMap<-uscounty -->
+<!-- sirMap$E_PCI<-as.numeric(sirMap$E_PCI) -->
+<!-- sirMap$E_MINRTY<-as.numeric(sirMap$E_MINRTY) -->
+<!-- sirMap$EP_AGE65<-as.numeric(sirMap$EP_AGE65) -->
+<!-- sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed) -->
+<!-- # hist(sirMap$Covid.Confirmed,128) -->
+<!-- sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP -->
+<!-- sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP -->
+<!-- sirMap$asthma.Deaths.p100k<-sirMap$asthma.Deaths*100/sirMap$E_TOTPOP -->
+
+<!-- sirMap<-sirMap[sirMap$EP_POV>=0,] -->
+<!-- sirMap<-sirMap[sirMap$EP_AGE65>=0,] -->
+<!-- sirMap<-sirMap[sirMap$EP_MINRTY>=0,] -->
+<!-- sirMap<-sirMap[sirMap$EP_CROWD>=0,] -->
+<!-- # nb <- poly2nb(sirMap) -->
+<!-- # nb2INLA("us.adj", nb) -->
+<!-- # g <- inla.read.graph(filename = "us.adj") -->
+<!-- # sirMap$re_u <- 1:nrow(sirMap@data) -->
+<!-- sirMap$re_v <- 1:nrow(sirMap@data) -->
+
+
+<!-- f1<-asthma.Deaths ~  Covid.Deaths.p100k + pm25 + EP_POV + EP_AGE65 + EP_MINRTY + EP_CROWD + f(STATE,model = "iid") + f(re_v, model = "iid") -->
+<!-- inla.m1 <- inla( f1, -->
+<!--                  family = "poisson",data = sirMap@data,E = Easthma, -->
+<!--                  num.threads = 8,verbose = F, -->
+<!--                  control.predictor = list(compute = TRUE), -->
+<!--                  control.compute = list(dic = TRUE,waic=T,cpo=TRUE)) -->
+
+<!-- sirMap$RRasth <- inla.m1$summary.fitted.values[, "mean"] -->
+<!-- sirMap$LLasth <- inla.m1$summary.fitted.values[, "0.025quant"] -->
+<!-- sirMap$ULasth <- inla.m1$summary.fitted.values[, "0.975quant"] -->
+<!-- ``` -->
+
+
+<!-- ```{r,echo=FALSE} -->
+
+<!-- summary(inla.m1) -->
+<!-- round(exp(inla.m1$summary.fixed[,c(1,3,5)]),2) -->
+
+<!-- # bri.Pois.resid(inla.m1) -->
+<!-- #check random effects -->
+<!-- # bri.hyperpar.summary(inla.m1) -->
+<!-- # check poisson assumption where u(x)=var(x) -->
+<!-- # bri.hyperpar.plot(inla.m1) -->
+
+
+<!-- tab <- inla.m1$summary.random$STATE -->
+<!-- names(tab)[c(4, 6)] <- c("IClower", "ICupper") -->
+<!-- tab<-tab[order(tab$ID),] -->
+<!-- tab$idx<-nrow(tab):1 -->
+<!-- tab$mean_exp<-exp(tab$mean) -->
+<!-- tab<-tab[!is.infinite(tab$mean_exp),] -->
+<!-- tab$IClower_exp<-exp(tab$IClower) -->
+<!-- tab$ICupper_exp<-exp(tab$ICupper) -->
+<!-- ID<-tab$ID -->
+<!-- ggplot(data = tab, aes(x = mean_exp, y = idx)) + -->
+<!--   geom_point() + xlab(expression(u[p])) + -->
+<!--   scale_x_continuous(breaks = NULL)+ -->
+<!--   scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) + -->
+<!--   geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) + -->
+<!--   geom_vline (xintercept = 1, linetype = 2)+ -->
+<!--   theme_fivethirtyeight() -->
+<!-- ``` -->
+
+
+<!-- ```{r,echo=FALSE} -->
+
+<!-- brks<-c(min(sirMap$RRasth),1.0,max(sirMap$RRasth)) -->
+<!-- ggplot() + -->
+<!--   geom_sf(data=st_as_sf(sirMap),aes(fill = RRasth)) + -->
+<!--   scale_fill_gradient2( -->
+<!--     midpoint = 1, low = "blue", mid = "white", high = "red", -->
+<!--      breaks = brks, -->
+<!--     labels = round(brks,1) -->
+<!--   ) + -->
+<!--   ggtitle("Relative Risk Asthma risk in Covid-19 Pandemic")+ -->
+<!--   coord_sf(crs = mycrs)+ -->
+<!--   theme_minimal() -->
+
+<!-- ``` -->
+
+<!-- # Asthma deaths 2 -->
+
+avgObesityPrev
+
+$Asthma_{Deaths}\sim covidMortality_{100k} + pm25_{avg} + EP\_POV_{\%} + (1|STATE)$
+
+```{r}
+sirMap<-uscounty
+# sirMap$E_PCI<-as.numeric(sirMap$E_PCI)
+# sirMap$E_MINRTY<-as.numeric(sirMap$E_MINRTY)
+# sirMap$EP_AGE65<-as.numeric(sirMap$EP_AGE65)
+sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed)
+# hist(sirMap$Covid.Confirmed,128)
+sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP
+sirMap$Covid.Deaths[is.na(sirMap$Covid.Deaths)]<-0
+sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP
+sirMap$asthma.Deaths[is.na(sirMap$asthma.Deaths)]<-0
+sirMap$asthma.Deaths.p100k<-sirMap$asthma.Deaths*100/sirMap$E_TOTPOP
+
+
+# nb <- poly2nb(sirMap)
+# nb2INLA("us.adj", nb)
+# g <- inla.read.graph(filename = "us.adj")
+# sirMap$re_u <- 1:nrow(sirMap@data)
+sirMap$re_v <- 1:nrow(sirMap@data)
+
+f1<-asthma.Deaths ~  Covid.Deaths + pm25avg + EP_POV + blackPE+latinoPE + femalePE + over65PE + avgObesityPrev + smokingPrev + f(ST_ABBR,avgObesityPrev,model = "iid") + f(ST_ABBR,smokingPrev,model = "iid") + f(re_v, model = "iid")
+inla.m2 <- inla( f1,
+                 family = "zeroinflatedpoisson1",
+                 data = sirMap@data,E = Easthma,
+                 num.threads = 8,verbose = F,
+                 control.predictor = list(compute = TRUE),
+                 control.compute = list(dic = TRUE,waic=T,cpo=TRUE))
+
+sirMap$RRasth2 <- inla.m2$summary.fitted.values[, "mean"]
+sirMap$LLasth2 <- inla.m2$summary.fitted.values[, "0.025quant"]
+sirMap$ULasth2 <- inla.m2$summary.fitted.values[, "0.975quant"]
+
+round(exp(inla.m2$summary.fixed[,c(1,3,5)]),2)
+bri.hyperpar.plot(inla.m2)
+bri.Pois.resid(inla.m2)
+tab <- inla.m2$summary.random$ST_ABBR
+names(tab)[c(4, 6)] <- c("IClower", "ICupper")
+tab<-tab[order(tab$ID),]
+tab$idx<-nrow(tab):1
+tab$mean_exp<-exp(tab$mean)
+tab<-tab[!is.infinite(tab$mean_exp),]
+tab$IClower_exp<-exp(tab$IClower)
+tab$ICupper_exp<-exp(tab$ICupper)
+ID<-tab$ID
+ggplot(data = tab, aes(x = mean_exp, y = idx)) +
+  geom_point() + xlab(expression(u[p])) +
+  scale_x_continuous(breaks = NULL)+
+  scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) +
+  geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) +
+  geom_vline (xintercept = 1, linetype = 2)+
+  theme_fivethirtyeight()
+```
+
+# brms
+
+```{r}
+library(brms)
+library(brinla)
+```
+
+```{r}
+brmsDF<-as.data.frame(sirMap)
+
+brm.fl1 <- brm(asthma.Deaths ~ offset(log(Easthma)) + Covid.Deaths + pm25avg + EP_POV + blackPE + latinoPE + femalePE + over65PE + avgObesityPrev + smokingPrev + (1+avgObesityPrev + smokingPrev|ST_ABBR), 
+              data = brmsDF, 
+              family = "zero_inflated_poisson",
+              # family = poisson(),
+              iter = 3000, cores  = 8,seed = 2020)  
+summary(brm.fl1)
+round(exp(summary(brm.fl1)$fixed[,c(1,3,4)]),2)
+
+pp_check(brm.fl1,nsamples = nrow(sirMap)/1)
+plot(brm.fl1, N = 2, ask = FALSE)
+plot(brm.fl1, points = TRUE,ask=FALSE)
+# names(brm.bmi)
+# ## extract fitted values
+fitted_values <- fitted(brm.fl1)
+```
+
+
+
+```{r}
+brmsDF<-as.data.frame(sirMap)
+
+brm.fl2 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + asthma.Deaths + pm25avg + EP_POV + blackPE + latinoPE + femalePE + over65PE +avgObesityPrev + smokingPrev + (1+avgObesityPrev + smokingPrev|ST_ABBR), 
+              data = brmsDF, 
+              family = "zero_inflated_poisson",
+              # family = poisson(),
+              iter = 3000, cores  = 8,seed = 2020)  
+summary(brm.fl2)
+round(exp(summary(brm.fl2)$fixed[,c(1,3,4)]),2)
+
+pp_check(brm.fl2,nsamples = nrow(brmsDF)/1)
+plot(brm.fl2, N = 2, ask = FALSE)
+plot(brm.fl2, points = TRUE,ask=FALSE)
+# names(brm.bmi)
+# ## extract fitted values
+fitted_values <- fitted(brm.fl1)
+```
+
+
+
+
+# Covid deaths
+
+$Covid_{Deaths}\sim asthmaMortality_{100k} + pm25_{2018} + EP\_POV_{\%} + EP\_AGE65_{\%} + EP\_MINRTY_{\%} + EP\_CROWD_{\%} + (1|STATE)$
+
+<!-- ```{r,include=FALSE} -->
+
+<!-- # plot(sirMap$asthma.Deaths.rate) -->
+
+<!-- f1<- Covid.Deaths ~  sirMap$asthma.Deaths.p100k + pm25avg + EP_POV + EP_AGE65 + EP_MINRTY + EP_CROWD + f(STATE,model = "iid") + f(re_v, model = "iid") -->
+<!-- inla.m1 <- inla( f1, -->
+<!--                  family = "zeroinflatedpoisson1", -->
+<!--                  data = sirMap@data,E = Easthma, -->
+<!--                  num.threads = 8,verbose = F, -->
+<!--                  control.predictor = list(compute = TRUE), -->
+<!--                  control.compute = list(dic = TRUE,waic=T,cpo=TRUE)) -->
+
+<!-- sirMap$RRcov <- inla.m1$summary.fitted.values[, "mean"] -->
+<!-- sirMap$LLcov <- inla.m1$summary.fitted.values[, "0.025quant"] -->
+<!-- sirMap$ULcov <- inla.m1$summary.fitted.values[, "0.975quant"] -->
+<!-- ``` -->
+
+
+```{r}
+sirMap<-uscounty
+
+sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed)
+sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP
+sirMap$Covid.Deaths[is.na(sirMap$Covid.Deaths)]<-0
+sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP
+sirMap$asthma.Deaths[is.na(sirMap$asthma.Deaths)]<-0
+sirMap$asthma.Deaths.p100k<-sirMap$asthma.Deaths*100/sirMap$E_TOTPOP
+
+sirMap$re_v <- 1:nrow(sirMap@data)
+
+f1<-Covid.Deaths ~  asthma.Deaths + pm25avg + EP_POV + blackPE+latinoPE + femalePE + over65PE + avgObesityPrev + smokingPrev + diabetesPrev + ckdPrev + f(ST_ABBR,model = "iid") + f(re_v, model = "iid")
+inla.m2 <- inla( f1,
+                 family = "zeroinflatedpoisson1",
+                 data = sirMap@data,E = Ecovid,
+                 num.threads = 8,verbose = F,
+                 control.predictor = list(compute = TRUE),
+                 control.compute = list(dic = TRUE,waic=T,cpo=TRUE))
+
+sirMap$RRasth2 <- inla.m2$summary.fitted.values[, "mean"]
+sirMap$LLasth2 <- inla.m2$summary.fitted.values[, "0.025quant"]
+sirMap$ULasth2 <- inla.m2$summary.fitted.values[, "0.975quant"]
+
+round(exp(inla.m2$summary.fixed[,c(1,3,5)]),2)
+bri.hyperpar.plot(inla.m2)
+bri.Pois.resid(inla.m2)
+
+tab <- inla.m2$summary.random$ST_ABBR
+names(tab)[c(4, 6)] <- c("IClower", "ICupper")
+tab<-tab[order(tab$ID),]
+tab$idx<-nrow(tab):1
+tab$mean_exp<-exp(tab$mean)
+tab<-tab[!is.infinite(tab$mean_exp),]
+tab$IClower_exp<-exp(tab$IClower)
+tab$ICupper_exp<-exp(tab$ICupper)
+ID<-tab$ID
+ggplot(data = tab, aes(x = mean_exp, y = idx)) +
+  geom_point() + xlab(expression(u[p])) +
+  scale_x_continuous(breaks = NULL)+
+  scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) +
+  geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) +
+  geom_vline (xintercept = 1, linetype = 2)+
+  theme_fivethirtyeight()
+```
+
+
+
+```{r,echo=FALSE}
+round(exp(inla.m1$summary.fixed[,c(1,3,5)]),2)
+
+tab <- inla.m1$summary.random$STATE
+names(tab)[c(4, 6)] <- c("IClower", "ICupper")
+tab<-tab[order(tab$ID),]
+tab$idx<-nrow(tab):1
+tab$mean_exp<-exp(tab$mean)
+tab<-tab[!is.infinite(tab$mean_exp),]
+tab$IClower_exp<-exp(tab$IClower)
+tab$ICupper_exp<-exp(tab$ICupper)
+ID<-tab$ID
+ggplot(data = tab, aes(x = mean_exp, y = idx)) +
+  geom_point() + xlab(expression(u[p])) +
+  scale_x_continuous(breaks = NULL)+
+  scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) +
+  geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) +
+  geom_vline (xintercept = 1, linetype = 2)+
+  theme_fivethirtyeight()
+
+```
+
+
+```{r,echo=FALSE}
+
+brks<-c(min(sirMap$RRcov),1.0,max(sirMap$RRcov))
+ggplot() +
+  geom_sf(data=st_as_sf(sirMap),aes(fill = RRcov)) +
+  scale_fill_gradient2(
+    midpoint = 1, low = "blue", mid = "white", high = "red",
+     breaks = brks,
+    labels = round(brks,1)
+  ) +
+  ggtitle("Relative Risk for Covid-19 Pandemic")+
+  coord_sf(crs = mycrs)+
+  theme_minimal()
+
+```
+
+
+
+

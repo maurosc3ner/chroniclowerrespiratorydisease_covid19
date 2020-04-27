@@ -1,0 +1,158 @@
+---
+title: "Chronic disease and demographics generator"
+author: "Esteban Correa"
+date: "April 15, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(sf)
+library(ggthemes)
+library(rgeos)
+library(maptools)
+
+#subset columns
+uscounty<-readOGR("data/SVI","SVI2018_US_county")
+uscounty@data<-uscounty@data %>%
+  dplyr::select(FIPS)
+```
+
+
+
+```{r}
+#Obesity
+obesity<-read.csv("../covid19/data/SVI2018/stObesity.csv")  %>% 
+  filter(Question=="Percent of adults aged 18 years and older who have obesity") %>% 
+  group_by(LocationAbbr) %>% 
+  summarise(avgObesity = mean(Data_Value,na.rm=T))
+colnames(obesity)<-c("ST_ABBR","avgObesityPrev")
+
+# Diabetes by State
+# diabetes<-read.csv("../covid19/data/SVI2018/CDI_Diabetes.csv") %>% 
+#   select(LocationAbbr,DataValue)
+# colnames(diabetes)<-c("ST_ABBR","diabetesPrev")
+diabetes<-read.csv("../chroniclowerrespiratorydisease_covid19/data/CDI_diabetes2.csv") %>% 
+  select(LocationAbbr,Data_Value)
+colnames(diabetes)<-c("ST_ABBR","diabetesPrev")
+
+# coronary artery disease
+coronary<-read.csv("../chroniclowerrespiratorydisease_covid19/data/CDI_CHD.csv") %>% 
+  select(LocationAbbr,Data_Value)
+colnames(coronary)<-c("ST_ABBR","chdPrev")
+
+# hypertension
+hyper<-read.csv("../chroniclowerrespiratorydisease_covid19/data/CDI_HTA.csv") %>% 
+  select(LocationAbbr,Data_Value)
+colnames(hyper)<-c("ST_ABBR","htaPrev")
+
+# smoke by State
+smoke<-read.csv("../covid19/data/SVI2018/smoking.csv") %>% 
+  select(LocationAbbr,DataValue)
+colnames(smoke)<-c("ST_ABBR","smokingPrev")
+
+# smoke in COPD by State
+smokeCOPD<-read.csv("../covid19/data/SVI2018/smokingCOPD.csv") %>% 
+  select(LocationAbbr,DataValue)
+colnames(smokeCOPD)<-c("ST_ABBR","smokingCOPD")
+
+# CKD
+ckd<-read.csv("../covid19/data/SVI2018/CKD.csv") %>% 
+  select(LocationAbbr,DataValue)
+colnames(ckd)<-c("ST_ABBR","ckdPrev")
+
+# asthma
+asthma<-read.csv("../covid19/data/SVI2018/CDI_Asthma.csv")%>% 
+  select(LocationAbbr,DataValue)
+colnames(asthma)<-c("ST_ABBR","asthmaPrev")
+
+stateCov<-merge(obesity,diabetes,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,smoke,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,smokeCOPD,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,ckd,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,asthma,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,coronary,by.x="ST_ABBR",by.y="ST_ABBR") 
+stateCov<-merge(stateCov,hyper,by.x="ST_ABBR",by.y="ST_ABBR") 
+write.csv(stateCov,"../covid19/data/SVI2018/CDIByState.csv")
+
+
+```
+
+# SMR per 100k
+
+```{r}
+#Obesity
+obesity<-read.csv("../asthma/CDCWONDER/obesityDeaths.csv")  %>%
+  mutate(obesitySMR=obesity.Deaths*100000/Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,obesity.Deaths,obesitySMR,Population)
+colnames(obesity)<-c("fips","obesity.Deaths","obesity.SMR","obesity.Population")
+
+
+
+# Diabetes
+diabetes<-read.csv("../asthma/CDCWONDER/diabetesDeaths.csv") %>%
+  mutate(diabetesSMR=diabetes.Deaths*100000/Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,diabetes.Deaths,diabetesSMR,Population)
+colnames(diabetes)<-c("fips","diabetes.Deaths","diabetes.SMR","diabetes.Population")
+
+# ischemic disease
+ischemic<-read.csv("../asthma/CDCWONDER/ischemicDeaths.csv")  %>%
+  mutate(ischemicSMR=ischemic.Deaths*100000/Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,ischemic.Deaths,ischemicSMR,Population)
+colnames(ischemic)<-c("fips","ischemic.Deaths","ischemic.SMR","ischemic.Population")
+
+# hypertension
+hta<-read.csv("../asthma/CDCWONDER/hta.Deaths.csv") %>%
+  mutate(htaSMR=hta.Deaths*100000/Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,hta.Deaths,htaSMR,Population)
+colnames(hta)<-c("fips","hta.Deaths","hta.SMR","hta.Population")
+
+# CKD
+ckd<-read.csv("../asthma/CDCWONDER/ckd.Deaths.csv") %>%
+  mutate(ckdSMR=ckd.Deaths*100000/Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,ckd.Deaths,ckdSMR,Population)
+colnames(ckd)<-c("fips","ckd.Deaths","ckd.SMR","ckd.Population")
+
+# asthma
+asthma<-read.csv("../asthma/CDCWONDER/asthmaDeaths.csv") %>%
+  mutate(asthma.Deaths=as.numeric(asthma.Deaths),
+         asthma.Population=as.numeric(as.character(asthma.Population)),
+    asthmaSMR=as.numeric(asthma.Deaths)*100000/as.numeric(asthma.Population),
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,asthma.Deaths,asthmaSMR,asthma.Population)
+colnames(asthma)<-c("fips","asthma.Deaths","asthma.SMR","asthma.Population")
+
+clrd<-read.csv("../asthma/CDCWONDER/chroniclowerRespDiseaseDeaths.csv") %>%
+  mutate(clrdSMR=clrd.Deaths*100000/clrd.Population,
+         fips=sprintf("%05d", County.Code)) %>% 
+  dplyr::select(fips,clrd.Deaths,clrdSMR,clrd.Population)
+colnames(clrd)<-c("fips","clrd.Deaths","clrd.SMR","clrd.Population")
+
+
+
+smrCov<-merge(uscounty,asthma,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,ckd,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,clrd,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,diabetes,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,hta,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,ischemic,by.x="FIPS",by.y="fips")
+smrCov<-merge(smrCov,obesity,by.x="FIPS",by.y="fips")
+
+smrCov<-as.data.frame(smrCov)
+summary(smrCov)
+
+write.csv(smrCov,"data/smrCDI.csv")
+```
+
+
+
+

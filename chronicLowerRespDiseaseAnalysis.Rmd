@@ -32,9 +32,9 @@ library(performance)
 covid19<-read.csv("data/covid04-24-2020.csv") %>%
   dplyr::select(FIPS,Covid.Confirmed,Covid.Deaths) %>%
   mutate(covidCFR=Covid.Deaths*100/Covid.Confirmed)
-clrdDeaths<-read.csv("data/chroniclowerRespDiseaseDeaths.csv") %>%
-  mutate(clrdSMR=clrd.Deaths*100000/clrd.Population)
-  # dplyr::select(County.Code,clrd.Deaths,clrd.Population,Crude.Rate) 
+
+allsmr<-read.csv("data/smrCDI.csv")
+
 cdi<-read.csv("data/CDIByState.csv")
 pm25<-read.csv("data/pm2.5byCounty.csv")
 demog<-read.csv("data/ACS5Years2018.csv")
@@ -49,14 +49,14 @@ uscounty@data<-uscounty@data %>%
 # Covid19 at April 20-2020, Asthma deaths from 2010-2017
 
 ```{r,include=FALSE}
-clrdDeaths$clrd.Deaths<-as.numeric(as.character(clrdDeaths$clrd.Deaths))
-clrdDeaths$clrd.Population<-as.numeric(as.character(clrdDeaths$clrd.Population))
-clrdDeaths$Crude.Rate<-as.numeric(as.character(clrdDeaths$Crude.Rate))
-clrdDeaths$fips<-sprintf("%05d", clrdDeaths$County.Code)
-clrdDeaths$clrd.Deaths[is.na(clrdDeaths$clrd.Deaths)]<-0
-
-covid19$id<-sprintf("%05d", covid19$FIPS) 
-covid19$Covid.Deaths[is.na(covid19$Covid.Deaths)]<-0
+# clrdDeaths$clrd.Deaths<-as.numeric(as.character(clrdDeaths$clrd.Deaths))
+# clrdDeaths$clrd.Population<-as.numeric(as.character(clrdDeaths$clrd.Population))
+# clrdDeaths$Crude.Rate<-as.numeric(as.character(clrdDeaths$Crude.Rate))
+# clrdDeaths$fips<-sprintf("%05d", clrdDeaths$County.Code)
+# clrdDeaths$clrd.Deaths[is.na(clrdDeaths$clrd.Deaths)]<-0
+# 
+# covid19$id<-sprintf("%05d", covid19$FIPS) 
+# covid19$Covid.Deaths[is.na(covid19$Covid.Deaths)]<-0
 
 
 # age groups
@@ -101,9 +101,10 @@ pm25<-pm25%>%
 <!-- # County level PM 2.5 -->
 
 ```{r}
+uscounty <- merge(uscounty, allsmr,by.x="FIPS",by.y="FIPS") #allSMR
 uscounty <- merge(uscounty, cdi,by.x="ST_ABBR",by.y="ST_ABBR") #Chronic diseases
-uscounty <- merge(uscounty, covid19,by.x="FIPS",by.y="id") #covidDeaths
-uscounty <- merge(uscounty, clrdDeaths,by.x="FIPS",by.y="fips") #asthmaDe
+uscounty <- merge(uscounty, covid19,by.x="FIPS",by.y="FIPS") #covidDeaths
+# uscounty <- merge(uscounty, clrdDeaths,by.x="FIPS",by.y="fips") #asthmaDe
 uscounty <- merge(uscounty, demog,by.x="FIPS",by.y="fips") #demog
 uscounty <- merge(uscounty, pm25,by.x="FIPS",by.y="fips") #pm25
 
@@ -121,25 +122,23 @@ head(uscounty,100)
 
 
 ```{r}
-
-# head(uscounty,100)
 uscounty$E_TOTPOP<-as.numeric(as.character(uscounty$E_TOTPOP))
-uscounty$Easthma <- expected(uscounty$E_TOTPOP, uscounty$clrd.Deaths, 1)
+# head(uscounty,100)
+uscounty$Eclrd <- expected(uscounty$E_TOTPOP, uscounty$clrd.Deaths, 1)
 uscounty$Ecovid <- expected(uscounty$E_TOTPOP, uscounty$Covid.Deaths, 1)
-
-uscounty$SIR.asthma <- uscounty$clrd.Deaths/uscounty$Easthma
+summary(uscounty$Ecovid)
+uscounty$SIR.clrd <- uscounty$clrd.Deaths/uscounty$Eclrd
 uscounty$SIR.covid <- uscounty$Covid.Deaths/uscounty$Ecovid
-head(uscounty)
 ```
 
-# ```{r}
+```{r}
 # hist(log(uscounty$covidCFR),64)
 # 
 # hist(uscounty$Covid.Deaths,64)
 # hist(uscounty$clrd.Deaths,64)
 # hist(uscounty$whitePE,64)
 # hist(uscounty$over65PE,64)
-# plot(uscounty$Covid.Deaths, uscounty$clrd.Deaths)
+# plot(log(uscounty$Covid.Deaths), log(uscounty$clrd.Deaths))
 # 
 # plot(uscounty$Covid.Deaths, uscounty$smokingPrev)
 # plot(uscounty$Covid.Deaths, uscounty$avgObesityPrev)
@@ -147,144 +146,359 @@ head(uscounty)
 # plot(uscounty$Covid.Deaths, uscounty$over65PE)
 # plot(uscounty$Covid.Deaths, uscounty$blackPE)
 # plot(uscounty$Covid.Deaths, uscounty$whitePE)
-# ```
+```
 
-# Covariates
+# Unadjusted
 
-EP_MINRTY = Percentage minority (all persons except white, nonHispanic) estimate E_PCI Per capita income estimate, 2014-2018 ACS.
-EP_CROWD = At household level (occupied housing units), more people than rooms estimate, 2014-2018 ACS
-EP_AGE65  = percentage of people age 65 over
-EP_POV = Percentage of people living under poverty
-EP_CROWD = Percentage of occupied housing units with more people than rooms estimate
+```{r}
+library(sjmisc)
+library(sjstats)
+niter<-8000
+```
 
-<!-- # Asthma deaths 1 -->
+<!-- bulk-ESS is greater than 100 times the number of chains -->
+# brms deaths ~ pm25
 
-<!-- $Asthma_{Deaths}\sim covidMortality_{100k} + pm25_{2018} + EP\_POV_{\%} + EP\_AGE65_{\%} + EP\_MINRTY_{\%} + EP\_CROWD_{\%} + (1|STATE)$ -->
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg )
+prior =auto_prior(formula, brmsDF, F)
 
-<!-- ```{r,include = FALSE} -->
-<!-- sirMap<-uscounty -->
-<!-- sirMap$E_PCI<-as.numeric(sirMap$E_PCI) -->
-<!-- sirMap$E_MINRTY<-as.numeric(sirMap$E_MINRTY) -->
-<!-- sirMap$EP_AGE65<-as.numeric(sirMap$EP_AGE65) -->
-<!-- sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed) -->
-<!-- # hist(sirMap$Covid.Confirmed,128) -->
-<!-- sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP -->
-<!-- sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP -->
-<!-- sirMap$clrd.Deaths.p100k<-sirMap$clrd.Deaths*100/sirMap$E_TOTPOP -->
+brm.pm25 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.pm25)
+round(exp(summary(brm.pm25)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.pm25)
+```
 
-<!-- sirMap<-sirMap[sirMap$EP_POV>=0,] -->
-<!-- sirMap<-sirMap[sirMap$EP_AGE65>=0,] -->
-<!-- sirMap<-sirMap[sirMap$EP_MINRTY>=0,] -->
-<!-- sirMap<-sirMap[sirMap$EP_CROWD>=0,] -->
-<!-- # nb <- poly2nb(sirMap) -->
-<!-- # nb2INLA("us.adj", nb) -->
-<!-- # g <- inla.read.graph(filename = "us.adj") -->
-<!-- # sirMap$re_u <- 1:nrow(sirMap@data) -->
-<!-- sirMap$re_v <- 1:nrow(sirMap@data) -->
+# brms deaths ~ poverty
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + EP_POV )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.pvr <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + EP_POV + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.pvr)
+round(exp(summary(brm.pvr)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.pm25)
+```
+
+# brms deaths ~ blackPE
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + blackPE )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.blk <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + blackPE + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.blk)
+round(exp(summary(brm.blk)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.blk)
+```
+
+# brms deaths ~ latinoPE
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + latinoPE )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.lat <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + latinoPE + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.lat)
+round(exp(summary(brm.lat)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.lat)
+```
+
+# brms deaths ~ malePE
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + malePE )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.male <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + malePE + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.male)
+round(exp(summary(brm.male)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.male)
+```
 
 
-<!-- f1<-clrd.Deaths ~  Covid.Deaths.p100k + pm25 + EP_POV + EP_AGE65 + EP_MINRTY + EP_CROWD + f(STATE,model = "iid") + f(re_v, model = "iid") -->
-<!-- inla.m1 <- inla( f1, -->
-<!--                  family = "poisson",data = sirMap@data,E = Easthma, -->
-<!--                  num.threads = 8,verbose = F, -->
-<!--                  control.predictor = list(compute = TRUE), -->
-<!--                  control.compute = list(dic = TRUE,waic=T,cpo=TRUE)) -->
+# brms deaths ~ femalePE
 
-<!-- sirMap$RRasth <- inla.m1$summary.fitted.values[, "mean"] -->
-<!-- sirMap$LLasth <- inla.m1$summary.fitted.values[, "0.025quant"] -->
-<!-- sirMap$ULasth <- inla.m1$summary.fitted.values[, "0.975quant"] -->
-<!-- ``` -->
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + femalePE )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.fem<- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + femalePE + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.fem)
+round(exp(summary(brm.fem)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.fem)
+```
+
+# brms deaths ~ avgObesityPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + avgObesityPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.obs.prev <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + avgObesityPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.obs.prev)
+round(exp(summary(brm.obs.prev)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.obs.prev)
+```
+
+# brms deaths ~ diabetesPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + diabetesPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.diab <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + diabetesPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.diab)
+round(exp(summary(brm.diab)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.diab)
+```
+
+# brms deaths ~ ckdPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + ckdPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.ckd <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + ckdPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.ckd)
+round(exp(summary(brm.ckd)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.ckd)
+```
+
+# brms deaths ~ smokingPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + smokingPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.smk <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + smokingPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.smk)
+round(exp(summary(brm.smk)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.smk)
+```
+
+# brms deaths ~ asthmaPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + asthmaPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.asth <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + asthmaPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.asth)
+round(exp(summary(brm.asth)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.asth)
+```
+
+# brms deaths ~ htaPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + htaPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.hta <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + htaPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.hta)
+round(exp(summary(brm.hta)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.hta)
+```
+
+# brms deaths ~ chdPrev
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + chdPrev )
+prior =auto_prior(formula, brmsDF, F)
+
+brm.chd <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + chdPrev + (1|ST_ABBR),
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              prior = prior,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.chd)
+round(exp(summary(brm.chd)$fixed[,c(1,3,4)]),2)
+r2_bayes(brm.chd)
+```
 
 
-<!-- ```{r,echo=FALSE} -->
-
-<!-- summary(inla.m1) -->
-<!-- round(exp(inla.m1$summary.fixed[,c(1,3,5)]),2) -->
-
-<!-- # bri.Pois.resid(inla.m1) -->
-<!-- #check random effects -->
-<!-- # bri.hyperpar.summary(inla.m1) -->
-<!-- # check poisson assumption where u(x)=var(x) -->
-<!-- # bri.hyperpar.plot(inla.m1) -->
 
 
-<!-- tab <- inla.m1$summary.random$STATE -->
-<!-- names(tab)[c(4, 6)] <- c("IClower", "ICupper") -->
-<!-- tab<-tab[order(tab$ID),] -->
-<!-- tab$idx<-nrow(tab):1 -->
-<!-- tab$mean_exp<-exp(tab$mean) -->
-<!-- tab<-tab[!is.infinite(tab$mean_exp),] -->
-<!-- tab$IClower_exp<-exp(tab$IClower) -->
-<!-- tab$ICupper_exp<-exp(tab$ICupper) -->
-<!-- ID<-tab$ID -->
-<!-- ggplot(data = tab, aes(x = mean_exp, y = idx)) + -->
-<!--   geom_point() + xlab(expression(u[p])) + -->
-<!--   scale_x_continuous(breaks = NULL)+ -->
-<!--   scale_y_continuous("STATE", breaks=nrow(tab):1,labels=c(ID)) + -->
-<!--   geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) + -->
-<!--   geom_vline (xintercept = 1, linetype = 2)+ -->
-<!--   theme_fivethirtyeight() -->
-<!-- ``` -->
 
 
-<!-- ```{r,echo=FALSE} -->
+```{r}
+r2_bayes(brm.fl1e)
+performance::icc(brm.fl1e)
+compare_performance(brm.fl1,brm.fl1b,brm.fl1c,brm.fl1e)
 
-<!-- brks<-c(min(sirMap$RRasth),1.0,max(sirMap$RRasth)) -->
-<!-- ggplot() + -->
-<!--   geom_sf(data=st_as_sf(sirMap),aes(fill = RRasth)) + -->
-<!--   scale_fill_gradient2( -->
-<!--     midpoint = 1, low = "blue", mid = "white", high = "red", -->
-<!--      breaks = brks, -->
-<!--     labels = round(brks,1) -->
-<!--   ) + -->
-<!--   ggtitle("Relative Risk Asthma risk in Covid-19 Pandemic")+ -->
-<!--   coord_sf(crs = mycrs)+ -->
-<!--   theme_minimal() -->
+```
+# brms deaths ~ prevalence
 
-<!-- ``` -->
+```{r}
+brmsDF<-as.data.frame(uscounty)
 
-<!-- # Asthma deaths 2 -->
+brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + (1|ST_ABBR), 
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              # family = poisson(),
+              iter = 3000, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.c19)
+round(exp(summary(brm.c19)$fixed[,c(1,3,4)]),2)
+
+# pp_check(brm.c19,nsamples = nrow(brmsDF)/1)
+plot(brm.c19, N = 2, ask = FALSE)
+plot(brm.c19, points = TRUE,ask=FALSE)
+# names(brm.bmi)
+# ## extract fitted values
+fitted_values <- fitted(brm.c19)
+```
+
+
+# brms deaths ~ prevalence
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+
+brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + (1|ST_ABBR), 
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              # family = poisson(),
+              iter = niter, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
+summary(brm.c19)
+round(exp(summary(brm.c19)$fixed[,c(1,3,4)]),2)
+
+# pp_check(brm.c19,nsamples = nrow(brmsDF)/1)
+plot(brm.c19, N = 2, ask = FALSE)
+plot(brm.c19, points = TRUE,ask=FALSE)
+# names(brm.bmi)
+# ## extract fitted values
+fitted_values <- fitted(brm.c19)
+```
+
+# SMR 
 
 Do the case fatality rate of covid19 increase based on long term exposure and asthma prevalence?
 
 ```{r}
-sirMap<-uscounty
-# sirMap$E_PCI<-as.numeric(sirMap$E_PCI)
-# sirMap$E_MINRTY<-as.numeric(sirMap$E_MINRTY)
-# sirMap$EP_AGE65<-as.numeric(sirMap$EP_AGE65)
-sirMap$Covid.Confirmed<-as.numeric(sirMap$Covid.Confirmed)
-# hist(sirMap$Covid.Confirmed,128)
-sirMap$Covid.Confirmed.p100k<-sirMap$Covid.Confirmed*100/sirMap$E_TOTPOP
-sirMap$Covid.Deaths[is.na(sirMap$Covid.Deaths)]<-0
-sirMap$Covid.Deaths.p100k<-sirMap$Covid.Deaths*100/sirMap$E_TOTPOP
-sirMap$clrd.Deaths[is.na(sirMap$clrd.Deaths)]<-0
-sirMap$clrd.Deaths.p100k<-sirMap$clrd.Deaths*100/sirMap$E_TOTPOP
-
+sirMap<-as.data.frame(uscounty)
+# sirMap <- sirMap[complete.cases(sirMap[, c("Covid.Deaths",
+#                                            "clrd.SMR",
+#                                            # "ckd.SMR",
+#                                            "diabetes.SMR",
+#                                            "hta.SMR",
+#                                            "ischemic.SMR"
+#                                            # "obesity.SMR"
+#                                            )]),] 
 
 # nb <- poly2nb(sirMap)
 # nb2INLA("us.adj", nb)
 # g <- inla.read.graph(filename = "us.adj")
 # sirMap$re_u <- 1:nrow(sirMap@data)
-sirMap$re_v <- 1:nrow(sirMap@data)
+sirMap$re_v <- 1:nrow(sirMap)
 
-f1<- covidCFR ~  asthmaPrev + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+femalePE + avgObesityPrev + smokingCOPD +  f(ST_ABBR,model = "iid")
-inla.m2 <- inla( f1,
-                 # family = "zeroinflatedpoisson1",
+f1<-Covid.Deaths ~ clrd.SMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE  + diabetes.SMR + hta.SMR + ischemic.SMR + avgObesityPrev + f(ST_ABBR,model = "iid") + f(re_v, model = "iid")
+inla.cv19.smr <- inla(f1,
+                 family = "zeroinflatedpoisson1",
                  # family = "poisson",
-                 family = "gaussian",
-                 data = sirMap@data,
-                 num.threads = 16,verbose = F,
+                 data = sirMap,E = Ecovid,
+                 num.threads = 8,verbose = F,
                  control.predictor = list(compute = TRUE),
                  control.compute = list(dic = TRUE,waic=T,cpo=TRUE))
 
-sirMap$RRasth2 <- inla.m2$summary.fitted.values[, "mean"]
-sirMap$LLasth2 <- inla.m2$summary.fitted.values[, "0.025quant"]
-sirMap$ULasth2 <- inla.m2$summary.fitted.values[, "0.975quant"]
-summary(inla.m2)
-round(exp(inla.m2$summary.fixed[,c(1,3,5)]),2)
-bri.hyperpar.plot(inla.m2)
-# bri.Pois.resid(inla.m2)
-tab <- inla.m2$summary.random$ST_ABBR
+sirMap$RRcv19smr<- inla.cv19.smr$summary.fitted.values[, "mean"]
+sirMap$LLcv19smr <- inla.cv19.smr$summary.fitted.values[, "0.025quant"]
+sirMap$ULcv19smr <- inla.cv19.smr$summary.fitted.values[, "0.975quant"]
+summary(inla.cv19.smr)
+round(exp(inla.cv19.smr$summary.fixed[,c(1,3,5)]),2)
+bri.hyperpar.plot(inla.cv19.smr)
+bri.Pois.resid(inla.cv19.smr)
+tab <- inla.cv19.smr$summary.random$ST_ABBR
 names(tab)[c(4, 6)] <- c("IClower", "ICupper")
 tab<-tab[order(tab$ID),]
 tab$idx<-nrow(tab):1
@@ -300,14 +514,47 @@ ggplot(data = tab, aes(x = mean_exp, y = idx)) +
   geom_errorbarh(aes(xmin = IClower_exp, xmax = ICupper_exp) ) +
   geom_vline (xintercept = 1, linetype = 2)+
   theme_fivethirtyeight()
-
-# 0.105^2/(0.105^2+0.2625^2)
-# [1] 0.137931
 ```
+
+Black population has 2% higher risk of covid-19, pm2.5 has 
+
+
+# brms SMR
+
+```{r}
+brmsDF<-as.data.frame(uscounty)
+# brmsDF <- brmsDF[complete.cases(brmsDF[, c("Covid.Deaths",
+#                                            "clrd.SMR",
+#                                            # "ckd.SMR",
+#                                            "diabetes.SMR",
+#                                            "hta.SMR",
+#                                            "ischemic.SMR"
+#                                            # "obesity.SMR"
+#                                            )]),] 
+
+brm.c19smr <- brm(Covid.Deaths ~ offset(log(Ecovid)) + clrd.SMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE  + diabetes.SMR + hta.SMR + ischemic.SMR + avgObesityPrev +(1|ST_ABBR), 
+              data = brmsDF, 
+              family = "poisson",chains=8,
+              # family = poisson(),
+              iter = 3000, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))  
+summary(brm.c19smr)
+round(exp(summary(brm.c19smr)$fixed[,c(1,3,4)]),2)
+
+# pp_check(brm.c19smr,nsamples = nrow(brmsDF)/1)
+plot(brm.c19smr, N = 2, ask = FALSE)
+plot(brm.c19smr, points = TRUE,ask=FALSE)
+# names(brm.bmi)
+# ## extract fitted values
+fitted_values <- fitted(brm.c19smr)
+```
+
+
+No es estable con el uso de SMR
+
 
 ---------------------------------------------------------------------------
 
-Do the mortality of chronic lower respiratory diseases increase with covid19?
 
 ```{r}
 sirMap<-uscounty
@@ -388,29 +635,37 @@ asthmaPrev     1.00       0.98       1.02
 Podemos concluir que no hay suficiene evidencia para que aumente el riesgo debido a covid19 o polucion
 
 
-# brms
-
-
+# brms deaths ~ full
 
 ```{r}
 brmsDF<-as.data.frame(uscounty)
+formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev )
+auto_prior(formula, brmsDF, F)
 
-brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + clrdSMR + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + (1|ST_ABBR), 
+
+brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + pm25avg + EP_POV + blackPE+latinoPE + malePE+ femalePE + avgObesityPrev  + smokingPrev + asthmaPrev + htaPrev + chdPrev + (1|ST_ABBR), 
               data = brmsDF, 
-              family = "poisson",chains=6,
+              family = "poisson",chains=8,
+              prior=auto_prior(formula, brmsDF, F),
               # family = poisson(),
-              iter = 10000, cores  = 16,seed = 2020)  
+              iter = 3000, cores  = 16,seed = 2020,
+              control = list(adapt_delta = 0.99))   
 summary(brm.c19)
 round(exp(summary(brm.c19)$fixed[,c(1,3,4)]),2)
 
-pp_check(brm.c19,nsamples = nrow(brmsDF)/1)
-plot(brm.c19, N = 2, ask = FALSE)
-plot(brm.c19, points = TRUE,ask=FALSE)
-# names(brm.bmi)
-# ## extract fitted values
-fitted_values <- fitted(brm.c19)
+# # pp_check(brm.c19,nsamples = nrow(brmsDF)/1)
+# plot(brm.c19, N = 2, ask = FALSE)
+# plot(brm.c19, points = TRUE,ask=FALSE)
+# # names(brm.bmi)
+# # ## extract fitted values
+# fitted_values <- fitted(brm.c19)
 ```
 
+
+
+
+
+Primeros resultados sin priors
 Group-Level Effects: 
 ~ST_ABBR (Number of levels: 48) 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS

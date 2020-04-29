@@ -170,11 +170,54 @@ brm.pm25 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a55
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.pm25)
 round(exp(summary(brm.pm25)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.pm25)
 ```
+
+Family: poisson 
+  Links: mu = log 
+Formula: Covid.Deaths ~ offset(log(Ecovid)) + a1524 + a2534 + a3544 + a4554 + a5564 + over65PE + pm25avg + (1 | ST_ABBR) 
+   Data: brmsDF (Number of observations: 3045) 
+Samples: 6 chains, each with iter = 8000; warmup = 4000; thin = 1;
+         total post-warmup samples = 24000
+
+Group-Level Effects: 
+~ST_ABBR (Number of levels: 48) 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)     2.57      0.34     2.00     3.33 1.00     4481     7663
+
+Population-Level Effects: 
+          Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept    -5.94      0.56    -7.06    -4.85 1.00     3592     7254
+a1524        -0.02      0.01    -0.04    -0.01 1.00    15350    17095
+a2534         0.06      0.01     0.04     0.07 1.00    15077    16964
+a3544        -0.03      0.01    -0.06    -0.00 1.00    15300    16337
+a4554         0.21      0.01     0.18     0.24 1.00    12153    15254
+a5564        -0.14      0.01    -0.17    -0.11 1.00    15443    15806
+over65PE      0.05      0.01     0.04     0.07 1.00    13512    16136
+pm25avg       0.31      0.01     0.30     0.33 1.00    24067    17334
+
+Samples were drawn using sampling(NUTS). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).
+> round(exp(summary(brm.pm25)$fixed[,c(1,3,4)]),2)
+          Estimate l-95% CI u-95% CI
+Intercept     0.00     0.00     0.01
+a1524         0.98     0.96     0.99
+a2534         1.06     1.04     1.07
+a3544         0.97     0.95     1.00
+a4554         1.24     1.20     1.27
+a5564         0.87     0.85     0.89
+over65PE      1.05     1.04     1.07
+pm25avg       1.37     1.35     1.39
+> r2_bayes(brm.pm25)
+# Bayesian R2 with Standard Error
+
+  Conditional R2: 0.863 [0.005]
+     Marginal R2: 0.078 [0.056]
+
 
 # brms deaths ~ poverty
 
@@ -189,7 +232,7 @@ brm.pvr <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.pvr)
 round(exp(summary(brm.pvr)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.pm25)
@@ -208,7 +251,7 @@ brm.blk <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.blk)
 round(exp(summary(brm.blk)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.blk)
@@ -227,7 +270,7 @@ brm.lat <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.lat)
 round(exp(summary(brm.lat)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.lat)
@@ -246,7 +289,7 @@ brm.male <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a55
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.male)
 round(exp(summary(brm.male)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.male)
@@ -266,7 +309,7 @@ brm.fem<- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.fem)
 round(exp(summary(brm.fem)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.fem)
@@ -285,7 +328,7 @@ brm.obs.prev <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.obs.prev)
 round(exp(summary(brm.obs.prev)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.obs.prev)
@@ -304,7 +347,7 @@ brm.diab <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a55
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.diab)
 round(exp(summary(brm.diab)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.diab)
@@ -323,7 +366,7 @@ brm.ckd <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.ckd)
 round(exp(summary(brm.ckd)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.ckd)
@@ -342,7 +385,7 @@ brm.smk <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.smk)
 round(exp(summary(brm.smk)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.smk)
@@ -361,7 +404,7 @@ brm.asth <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a55
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.asth)
 round(exp(summary(brm.asth)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.asth)
@@ -380,7 +423,7 @@ brm.hta <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a556
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.hta)
 round(exp(summary(brm.hta)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.hta)
@@ -392,14 +435,13 @@ r2_bayes(brm.hta)
 brmsDF<-as.data.frame(uscounty)
 formula<-formula(Covid.Deaths ~ a1524+a2534+a3544+a4554+a5564+over65PE + chdPrev )
 prior =auto_prior(formula, brmsDF, F)
-
 brm.chd <- brm(Covid.Deaths ~ offset(log(Ecovid)) + a1524+a2534+a3544+a4554+a5564+over65PE + chdPrev + (1|ST_ABBR),
               data = brmsDF, 
               family = "poisson",chains=6,
               prior = prior,
               # family = poisson(),
               iter = niter, cores  = 8,seed = 2020,
-              control = list(adapt_delta = 0.99))   
+              control = list(adapt_delta = 0.99,max_treedepth=15))   
 summary(brm.chd)
 round(exp(summary(brm.chd)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.chd)
@@ -455,7 +497,7 @@ brm.c19 <- brm(Covid.Deaths ~ offset(log(Ecovid)) + pm25avg + s.a1524+s.a2534+s.
               family = "poisson",chains=6,
               # family = poisson(),
               iter = 10000, cores  = 4,seed = 2020,
-              control = list(adapt_delta = 0.999))   
+              control = list(adapt_delta = 0.99,max_treedepth=159))   
 summary(brm.c19)
 round(exp(summary(brm.c19)$fixed[,c(1,3,4)]),2)
 r2_bayes(brm.c19)
